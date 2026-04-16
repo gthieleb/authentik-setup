@@ -1,1 +1,164 @@
-{}
+# ==============================================================================
+# Authentik Helm Chart Values
+# Chart: goauthentik/authentik  version: 2026.2.2
+# Docs: https://docs.goauthentik.io/docs/installation/kubernetes
+#
+# Design decisions:
+#   - PostgreSQL credentials loaded via file:/// from a CNPG-generated Secret
+#   - Internal PostgreSQL sub-chart disabled (CNPG manages the cluster)
+#   - Redis sub-chart not configured (removed as dependency in 2026.x)
+#   - Ingress disabled in favour of Traefik IngressRoute (see k8s/authentik/)
+#   - HPA enabled on both server and worker
+#   - PodDisruptionBudgets prevent single-replica outages during node drains
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Global — image, security context, and other shared settings
+# ------------------------------------------------------------------------------
+global:
+  image:
+    # Pinned to a specific patch release; update deliberately via Renovate/Dependabot
+    repository: ghcr.io/goauthentik/server
+    tag: "2026.2.2"
+    pullPolicy: IfNotPresent
+
+  # Pod-level security context applied to both server and worker pods
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+# ------------------------------------------------------------------------------
+# authentik — application configuration passed as env vars / config file
+# ------------------------------------------------------------------------------
+authentik:
+  log_level: warning
+
+  postgresql:
+    # CNPG read-write service; change to -ro endpoint to direct reads elsewhere
+    host: "authentik-cnpg-rw.database.svc.cluster.local"
+    port: 5432
+    name: "authentik"
+    # file:/// tells authentik to read the value from a mounted file.
+    # The CNPG-generated Secret (authentik-cnpg-app) is volumeMounted at
+    # /postgres-creds in both server and worker below.
+    user: "file:///postgres-creds/username"
+    password: "file:///postgres-creds/password"
+
+  email:
+    # SMTP relay for system emails (password reset, notifications).
+    # Credentials are intentionally left empty — supply via a separate Secret
+    # and mount/inject them at deploy time, or configure an unauthenticated relay.
+    host: "smtp.example.com"
+    port: 587
+    use_tls: true
+    from: "authentik@example.com"
+    username: ""
+    password: ""
+
+# ------------------------------------------------------------------------------
+# server — HTTP/HTTPS API + UI
+# ------------------------------------------------------------------------------
+server:
+  # Static replica count acts as the floor; HPA manages scaling above this
+  replicas: 2
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # Ingress is disabled — Traefik IngressRoute CRD is used instead.
+  # See k8s/authentik/ingressroute.yaml for the routing configuration.
+  ingress:
+    enabled: false
+
+  metrics:
+    # Exposes /metrics on port 9300 for Prometheus scraping
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+  # Prevent full outage during rolling updates or node evictions
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+  # ------------------------------------------------------------------
+  # PostgreSQL credentials volume
+  # Secret 'authentik-cnpg-app' is created by CNPG for the app user;
+  # keys 'username' and 'password' are referenced via file:/// above.
+  # ------------------------------------------------------------------
+  volumes:
+    - name: postgres-creds
+      secret:
+        secretName: authentik-cnpg-app
+
+  volumeMounts:
+    - name: postgres-creds
+      mountPath: /postgres-creds
+      readOnly: true
+
+# ------------------------------------------------------------------------------
+# worker — background task processor (flows, policies, events, outposts)
+# NOTE: Worker memory must be ≥1Gi — Python 3.14 roughly doubled RSS usage
+#       in the 2026.x release line.
+# ------------------------------------------------------------------------------
+worker:
+  replicas: 2
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+  # Same credential volume as server — worker also reads from file:///
+  volumes:
+    - name: postgres-creds
+      secret:
+        secretName: authentik-cnpg-app
+
+  volumeMounts:
+    - name: postgres-creds
+      mountPath: /postgres-creds
+      readOnly: true
+
+# ------------------------------------------------------------------------------
+# postgresql — built-in sub-chart (disabled; CNPG manages the cluster)
+# ------------------------------------------------------------------------------
+postgresql:
+  enabled: false
+
+# ------------------------------------------------------------------------------
+# prometheus — alerting rules bundled with the chart
+# ------------------------------------------------------------------------------
+prometheus:
+  rules:
+    enabled: true

@@ -1,1 +1,140 @@
-{}
+# CNPG Cluster Helm Values
+# Chart: cloudnative-pg/cluster (NOT the operator chart cloudnative-pg/cloudnative-pg)
+# Pre-requisite: The CNPG operator must already be installed in the cluster.
+#
+# CNPG creates a read-write service at:
+#   <cluster-name>-rw.<namespace>.svc.cluster.local
+# Authentik connects via:
+#   authentik-cnpg-rw.database.svc.cluster.local
+
+# ---------------------------------------------------------------------------
+# Cluster configuration
+# ---------------------------------------------------------------------------
+cluster:
+  # PostgreSQL major version — keep aligned with Authentik requirements
+  postgresqlMajorVersion: "16"
+
+  # Number of PostgreSQL instances.
+  # 1 = single-node (development / cost-saving).
+  # For High Availability, uncomment the line below and set to 3.
+  instances: 1
+  # instances: 3  # HA mode — requires at least 3 nodes or pod anti-affinity tolerations
+
+  # Primary database and owner bootstrapped via initdb.
+  # CNPG automatically creates a secret named `<cluster-name>-app`
+  # with keys `username` and `password` for the application user.
+  bootstrap:
+    initdb:
+      database: authentik
+      owner: authentik
+      # Encoding and locale for the new database
+      encoding: UTF8
+      localeCType: C
+      localeCollate: C
+
+  # Superuser access disabled for security.
+  # Application code should use the least-privilege `authentik` user.
+  enableSuperuserAccess: false
+
+  # Storage for the main PostgreSQL data directory
+  storage:
+    size: 10Gi
+    # storageClass: ""  # Leave empty to use the cluster default StorageClass.
+    #                   # Common options: standard, gp2, gp3, premium-rwo, etc.
+
+  # WAL (Write-Ahead Log) storage on a separate PVC for better I/O isolation.
+  # Uncomment to enable dedicated WAL storage.
+  # walStorage:
+  #   size: 5Gi
+  #   storageClass: ""
+
+  # Resource requests and limits for each PostgreSQL pod.
+  # Requests: guaranteed allocation; limits: hard cap.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  # PostgreSQL configuration parameters (postgresql.conf overrides).
+  postgresql:
+    parameters:
+      # Tune shared_buffers to ~25 % of container memory limit (2Gi → 512MB is
+      # the ceiling, but 256MB is a safe conservative default).
+      shared_buffers: "256MB"
+      # Maximum concurrent connections. Authentik workers use connection
+      # pooling, so 200 is sufficient for most deployments.
+      max_connections: "200"
+      # Enable logging of slow queries (>1 s) for performance analysis.
+      log_min_duration_statement: "1000"
+
+# ---------------------------------------------------------------------------
+# Backup configuration (Barman / S3)
+# ---------------------------------------------------------------------------
+backups:
+  enabled: true
+
+  # Provider for the object store.  Only s3 is shown here; azure/gcs also supported.
+  provider: s3
+
+  s3:
+    # Destination path in your S3 bucket.
+    # Format: s3://<bucket-name>/<path-prefix>/
+    destinationPath: s3://authentik-cnpg-backups/cnpg/
+
+    # AWS region where the bucket lives.
+    # Replace with your actual region, e.g. us-east-1 or ap-southeast-1.
+    region: eu-central-1  # TODO: override via ArgoCD applicationset or Helm --set
+
+    # AWS credentials sourced from a Kubernetes Secret — NEVER hardcode these.
+    # Create the secret beforehand:
+    #   kubectl create secret generic cnpg-s3-creds \
+    #     --namespace database \
+    #     --from-literal=ACCESS_KEY_ID=<your-key> \
+    #     --from-literal=ACCESS_SECRET_KEY=<your-secret>
+    credentials:
+      accessKeyId:
+        name: cnpg-s3-creds
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-s3-creds
+        key: ACCESS_SECRET_KEY
+
+  # Compress WAL segments before shipping to S3.
+  wal:
+    compression: gzip
+    # encryption: AES256  # Optional server-side encryption
+
+  # Compress base backups before uploading.
+  data:
+    compression: gzip
+    # encryption: AES256
+
+  # Scheduled (cron) backup — runs daily at 02:00 UTC.
+  scheduledBackups:
+    - name: daily
+      schedule: "0 2 * * *"    # minute hour day month weekday
+      backupOwnerReference: self
+
+  # Retention policy — keep backups for 30 days.
+  retentionPolicy: "30d"
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+monitoring:
+  # CNPG exposes metrics via a built-in exporter on each pod.
+  # PodMonitor (not ServiceMonitor) is the correct resource for CNPG because
+  # the exporter runs as a sidecar/port on the pod, not behind a Service.
+  enablePodMonitor: true
+
+  # Deploy a PrometheusRule with pre-built CNPG alerting rules.
+  prometheusRule:
+    enabled: true
+    # Labels added to the PrometheusRule so your Prometheus Operator
+    # selector can discover it.  Adjust to match your Prometheus instance's
+    # ruleSelector labels (e.g. release: kube-prometheus-stack).
+    labels:
+      release: kube-prometheus-stack
