@@ -1,1 +1,149 @@
-# ArgoCD ApplicationSet
+# ArgoCD ApplicationSet — Authentik Infrastructure
+#
+# Deploys three Applications in order via sync waves:
+#   Wave -1 : cnpg-cluster     — PostgreSQL cluster (must exist before Authentik)
+#   Wave  0 : authentik        — Authentik identity provider
+#   Wave  1 : authentik-ingress — Traefik IngressRoute + cert-manager Certificate
+#
+# Prerequisites (must already be installed in the cluster):
+#   - ArgoCD >= 2.6  (multi-source support required)
+#   - CNPG operator  (manages the PostgreSQL cluster CRD)
+#   - cert-manager   (issues the TLS certificate)
+#   - Traefik        (handles IngressRoute CRD)
+#
+# Multi-source pattern (ArgoCD >= 2.6):
+#   The Helm apps use two sources:
+#     Source 1 — upstream Helm chart registry (chart + version)
+#     Source 2 — this Git repo (ref: values), making $values/ available
+#   valueFiles entries prefixed with $values/ resolve to files in this repo.
+#
+# Customisation checklist:
+#   1. Replace the repoURL values if your fork lives elsewhere
+#   2. Update authentik.example.com in k8s/ingress-route.yaml
+#   3. Bump chartVersion fields when you want a new release
+#   4. Adjust namespaces in the element list if needed
+
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: authentik-infrastructure
+  namespace: argocd
+spec:
+  goTemplate: true
+
+  generators:
+    # ─────────────────────────────────────────────────────────────────────────
+    # Generator 1 — Helm-based applications
+    # Produces two Applications (CNPG cluster + Authentik) that use the global
+    # multi-source template below.  Each element carries all fields referenced
+    # in spec.template: chartRepo, chartName, chartVersion, valuesPath,
+    # namespace, and syncWave.
+    # ─────────────────────────────────────────────────────────────────────────
+    - list:
+        elements:
+          # CNPG PostgreSQL cluster — wave -1 ensures it exists before Authentik
+          - name: cnpg-cluster
+            namespace: database
+            chartRepo: https://cloudnative-pg.github.io/charts/
+            chartName: cluster
+            chartVersion: "0.3.2"
+            valuesPath: charts/cnpg/values.yaml
+            syncWave: "-1"
+
+          # Authentik identity provider — wave 0
+          - name: authentik
+            namespace: authentik
+            chartRepo: https://charts.goauthentik.io/
+            chartName: authentik
+            chartVersion: "2026.2.2"
+            valuesPath: charts/authentik/values.yaml
+            syncWave: "0"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Generator 2 — Manifest-based application (IngressRoute)
+    # Raw Kubernetes manifests from k8s/ directory; no Helm required.
+    # This generator carries its own inline template that uses a single Git
+    # source — it completely replaces the global template for these Apps.
+    # ─────────────────────────────────────────────────────────────────────────
+    - list:
+        elements:
+          # Traefik IngressRoute + cert-manager Certificate — wave 1 (last)
+          - name: authentik-ingress
+            namespace: authentik
+            syncWave: "1"
+      # Inline template override: single Git source pointing to k8s/ directory
+      template:
+        metadata:
+          name: '{{.name}}'
+          namespace: argocd
+          annotations:
+            argocd.argoproj.io/sync-wave: '{{.syncWave}}'
+          labels:
+            app.kubernetes.io/managed-by: argocd
+            app.kubernetes.io/part-of: authentik-infrastructure
+        spec:
+          project: default
+          source:
+            # All raw manifests (IngressRoute, Certificate, Middleware) live here
+            repoURL: https://github.com/gthieleb/authentik-setup
+            targetRevision: main
+            path: k8s/
+          destination:
+            server: https://kubernetes.default.svc
+            namespace: '{{.namespace}}'
+          syncPolicy:
+            automated:
+              selfHeal: true
+              prune: true
+            syncOptions:
+              - CreateNamespace=true
+              - ServerSideApply=true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Global template — used by Generator 1 (Helm apps with multi-source)
+  #
+  # Multi-source layout:
+  #   sources[0] — upstream Helm chart (chartRepo / chartName / chartVersion)
+  #   sources[1] — this Git repo, exposed as $values
+  #
+  # The $values/ prefix in valueFiles resolves to the root of sources[1],
+  # so $values/charts/cnpg/values.yaml and $values/charts/authentik/values.yaml
+  # are read from this repository at the given targetRevision.
+  # ───────────────────────────────────────────────────────────────────────────
+  template:
+    metadata:
+      name: '{{.name}}'
+      namespace: argocd
+      annotations:
+        # Ordering guarantee: wave -1 (CNPG) → wave 0 (Authentik) → wave 1 (Ingress)
+        argocd.argoproj.io/sync-wave: '{{.syncWave}}'
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/part-of: authentik-infrastructure
+    spec:
+      project: default
+      sources:
+        # Source 1: upstream Helm chart from the public registry
+        - repoURL: '{{.chartRepo}}'
+          chart: '{{.chartName}}'
+          targetRevision: '{{.chartVersion}}'
+          helm:
+            valueFiles:
+              # $values/ resolves to the root of Source 2 below
+              - $values/{{.valuesPath}}
+        # Source 2: this Git repo — referenced by Source 1 via $values
+        - repoURL: https://github.com/gthieleb/authentik-setup
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          selfHeal: true
+          prune: true
+        syncOptions:
+          # ArgoCD creates the target namespace automatically if absent
+          - CreateNamespace=true
+          # Server-Side Apply avoids field-manager conflicts with Helm-managed fields
+          - ServerSideApply=true
