@@ -1,1 +1,10 @@
-# Example variables - copy to terraform.tfvars
+# NOTE: gthieleb/terraform-aws-s3-easy doesn't exist yet — adjust when published
+
+aws_region              = "eu-central-1"
+tfstate_bucket_name     = "authentik-setup-tfstate-example"
+cnpg_backup_bucket_name = "authentik-setup-cnpg-backup-example"
+
+common_tags = {
+  Project = "authentik-setup"
+  Owner   = "platform"
+}

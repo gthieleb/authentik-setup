@@ -1,1 +1,12 @@
-# Example variables - copy to terraform.tfvars
+authentik_url = "https://authentik.example.com"
+
+# Set a bootstrap or service account API token here when copying to terraform.tfvars.
+authentik_token = "replace-me"
+
+oauth2_redirect_uris = [
+  "https://app.example.com/oauth/callback",
+]
+
+saml_acs_url = "https://app.example.com/saml/acs"
+
+saml_source_sso_url = "https://idp.example.com/saml/sso"
