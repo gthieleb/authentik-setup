@@ -45,3 +45,25 @@ locals {
   saml_source_name        = "Example External SAML IdP"
   saml_source_slug        = "example-saml-idp"
 }
+
+# Brand configuration for device flow assignment.
+# The device code flow must be assigned to the active brand's
+# flow_device_code field to enable the /application/o/device/ endpoint.
+data "authentik_brand" "default" {
+  domain = var.authentik_brand_domain
+}
+
+resource "authentik_brand" "default" {
+  domain         = data.authentik_brand.default.domain
+  branding_title = data.authentik_brand.default.branding_title
+  default        = data.authentik_brand.default.default
+
+  # Preserve existing flow assignments from the current brand
+  flow_authentication = data.authentik_brand.default.flow_authentication
+  flow_invalidation   = data.authentik_brand.default.flow_invalidation
+  flow_recovery       = data.authentik_brand.default.flow_recovery
+  flow_unenrollment   = data.authentik_brand.default.flow_unenrollment
+
+  # Assign device code flow — enables POST /application/o/device/
+  flow_device_code = authentik_flow.device_code.id
+}

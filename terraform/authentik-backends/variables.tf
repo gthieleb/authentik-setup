@@ -27,3 +27,9 @@ variable "saml_source_sso_url" {
   type        = string
   default     = "https://idp.example.com/saml/sso"
 }
+
+variable "authentik_brand_domain" {
+  description = "Domain of the Authentik brand to configure. Use the authentik instance domain or '.' for the default brand."
+  type        = string
+  default     = "authentik.example.com"
+}

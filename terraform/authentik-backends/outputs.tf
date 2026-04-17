@@ -22,3 +22,13 @@ output "example_app_url" {
   description = "Example callback URL representing the downstream application integration."
   value       = var.oauth2_redirect_uris[0]
 }
+
+output "device_flow_slug" {
+  description = "Slug of the device code flow."
+  value       = authentik_flow.device_code.slug
+}
+
+output "device_authorization_endpoint" {
+  description = "Device authorization endpoint for OAuth2 device flow (POST /application/o/device/)."
+  value       = "${local.authentik_base_url}/application/o/device/"
+}
