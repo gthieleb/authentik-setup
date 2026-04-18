@@ -101,10 +101,11 @@ Before deploying, ensure you have the following:
 - **`charts/authentik/values.yaml`**: Production-ready Helm values for Authentik, including HPA and PDB settings.
 - **`charts/cnpg/values.yaml`**: Configuration for the PostgreSQL cluster, including backup settings to S3.
 - **`k8s/ingressroute.yaml`**: Traefik routing and TLS certificate request via cert-manager.
+- **`terraform/authentik-backends/device-flow.tf`**: Device Authorization Flow (RFC 8628) configuration — a flow with `designation="stage_configuration"` for headless/CLI clients. Configure via `authentik_brand_domain` variable (use `"."` for the default brand) to assign it to a brand via `flow_device_code`. Outputs: `device_flow_slug` and `device_authorization_endpoint` (`/application/o/device/`).
 
 ## Terraform Modules
 
-- **`authentik-backends`**: Manages OAuth2/OIDC providers, SAML2 Identity Providers, and Service Provider configurations.
+- **`authentik-backends`**: Manages OAuth2/OIDC providers, SAML2 Identity Providers, Service Provider configurations, and OAuth2 Device Authorization Flow (RFC 8628) for headless/CLI authentication.
 - **`s3-buckets`**: A dummy example demonstrating S3 bucket creation using a local mock of the `gthieleb/terraform-aws-s3-easy` module.
 
 ## Customization
@@ -113,6 +114,7 @@ To add new identity providers or applications:
 1. **OAuth2/OIDC**: Add new `authentik_provider_oauth2` and `authentik_application` resources in the `terraform/authentik-backends` module.
 2. **SAML**: Configure new SAML sources or IdPs by adding the corresponding resources in the Terraform module.
 3. **Helm Values**: Adjust `charts/authentik/values.yaml` to tune performance, resource limits, or enable additional Authentik features.
+4. **Device Flow (RFC 8628)**: Customize the flow slug or authentication requirements in `device-flow.tf`. The flow is enabled by assigning it to a brand via the `flow_device_code` field using the `authentik_brand_domain` variable.
 
 ## License
 

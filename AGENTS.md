@@ -7,7 +7,7 @@ Repository purpose: GitOps-managed Authentik identity provider deployment with C
 - `charts/authentik/` — Authentik Helm chart values (production-sane, CNPG integration).
 - `charts/cnpg/` — CloudNativePG Cluster Helm values (S3 backup, PodMonitor).
 - `k8s/` — Traefik IngressRoute + cert-manager Certificate manifests.
-- `terraform/authentik-backends/` — OAuth2/OIDC + SAML2 provider/source configuration.
+- `terraform/authentik-backends/` — OAuth2/OIDC + SAML2 + OAuth2 Device Authorization Flow (RFC 8628) provider/source configuration.
 - `terraform/s3-buckets/` — S3 bucket provisioning (dummy module for `gthieleb/terraform-aws-s3-easy`).
 
 ## Key Files
@@ -15,7 +15,7 @@ Repository purpose: GitOps-managed Authentik identity provider deployment with C
 - `charts/authentik/values.yaml` — Authentik runtime settings and DB wiring.
 - `charts/cnpg/values.yaml` — PostgreSQL cluster, backups, and monitoring.
 - `k8s/ingressroute.yaml` — public routing via Traefik.
-- `terraform/authentik-backends/*.tf` — IdP backend/provider definitions.
+- `terraform/authentik-backends/*.tf` — IdP backend/provider definitions, including `device-flow.tf` (RFC 8628 Device Authorization Flow).
 - `terraform/s3-buckets/*.tf` — bucket resources for backups and artifacts.
 
 ## Tech Stack
@@ -31,6 +31,7 @@ Repository purpose: GitOps-managed Authentik identity provider deployment with C
 - Namespaces: `authentik` (app), `database` (CNPG), `argocd` (ArgoCD)
 - Sync waves: `-1` (CNPG) → `0` (Authentik) → `1` (IngressRoute)
 - Secret pattern: `file:///` for CNPG credentials
+- Device flow: requires brand assignment via `flow_device_code` field; brand uses read-modify-write pattern (data source + resource preserving all existing flows)
 
 ## Common Operations
 - Validate YAML: `python3 -c "import yaml; yaml.safe_load(open('file'))"`
